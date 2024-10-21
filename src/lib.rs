@@ -11,7 +11,7 @@ pub mod with_error;
 use std::fmt::Debug;
 use domain::Domain;
 pub use param_struct::param_struct;
-pub use data_io::{Savable, Plot, PRESENTATION_STYLE, PAPER_STYLE, LIGHT, DARK, Numpy, save};
+pub use data_io::{Savable, Plot, PRESENTATION_STYLE, PAPER_STYLE, LIGHT, DARK, Scale, Numpy, save};
 pub use calculators::iterative_calculation;
 
 pub const EM_GAMMA : f64 = 0.577215664901532860606512090082402431_f64;
