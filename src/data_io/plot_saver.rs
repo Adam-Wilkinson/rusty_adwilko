@@ -12,9 +12,16 @@ use numpy::{PyArray, PyArray2, PyArrayMethods};
 
 pub struct Plot<'a> {
     pub extra_funcs : &'a [&'a str],
+    pub scale : Scale,
     pub show : bool,
     pub style : PlotStyleDef<'a>,
     pub color_theme : ColorTheme<'a>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum Scale {
+    Linear,
+    Logarithmic,
 }
 
 pub struct ColorTheme<'a> {
@@ -61,7 +68,7 @@ pub const PRESENTATION_STYLE : PlotStyleDef = PlotStyleDef {
 
 impl<'a> Default for Plot<'a> {
     fn default() -> Self {
-        Plot { extra_funcs : &[], show : false, style : PAPER_STYLE, color_theme : LIGHT }
+        Plot { extra_funcs : &[], scale : Scale::Linear, show : false, style : PAPER_STYLE, color_theme : LIGHT }
     }
 }
 
@@ -129,6 +136,16 @@ impl<'a, const N : usize> Savable<Plot<'a>, PyErr> for CalculationResults<'a, On
                     plt.getattr("legend")?.call1((PyList::new_bound(py, &self.result_names),))?;
             }
 
+            if context.scale == Scale::Linear {
+                [real_axes, imag_axes].iter().try_for_each(|ax| {
+                    ax.getattr("set_yscale")?.call1(("log",))?;
+                    ax.getattr("set_ylabel")?.call1(("log",))?;
+                    ax.getattr("set_xscale")?.call1(("log",))?;
+                    ax.getattr("set_xlabel")?.call1(("log",))?;
+                    Ok::<(), pyo3::PyErr>(())
+                })?;
+            }
+
             call_extra_funcs(py, "matplotlib.pyplot", context.extra_funcs)?;
 
             fig.getattr("savefig")?.call1((file_path.to_owned() + ".pdf",))?;
@@ -162,7 +179,10 @@ impl<'a, const N : usize> Savable<Plot<'a>, PyErr> for CalculationResults<'a, On
             savefig_kwargs.set_item("bbox_inches", "tight")?;
             savefig_kwargs.set_item("facecolor", "none")?;
 
-            // plt.getattr("patch")?.getattr("set_alpha")?.call1((0.0,))?;
+            plt.getattr("yscale")?.call1(("log",))?;
+            plt.getattr("ylabel")?.call1(("log",))?;
+            plt.getattr("xscale")?.call1(("log",))?;
+            plt.getattr("xlabel")?.call1(("log",))?;
 
             plt.getattr("savefig")?.call((file_path.to_owned() + ".pdf",), Some(&savefig_kwargs))?;
             if context.show {
@@ -194,8 +214,6 @@ impl<'a, const N : usize> Savable<Plot<'a>, PyErr> for CalculationResults<'a, Tw
             plot_kwargs.set_item("extent", [self.domain_data.x_limits.0, self.domain_data.x_limits.1, self.domain_data.y_limits.0, self.domain_data.y_limits.1])?;
             plot_kwargs.set_item("cmap", "seismic")?;
 
-            // let norm = py.import_bound("matplotlib")?.getattr("colors")?.getattr("LogNorm")?.call0()?;
-
             self.results.iter()
                 .zip(flattened_ax)
                 .map(|(result, current_ax)| {
@@ -209,13 +227,17 @@ impl<'a, const N : usize> Savable<Plot<'a>, PyErr> for CalculationResults<'a, Tw
                         my_plot_kwargs.set_item("cmap", "seismic")?;
                         my_plot_kwargs.set_item("vmin", -f64::max(-minimum, maximum))?;
                         my_plot_kwargs.set_item("vmax", f64::max(-minimum, maximum))?;
-                        my_plot_kwargs.set_item("norm", "symlog")?;
+                        if context.scale == Scale::Logarithmic {
+                            my_plot_kwargs.set_item("norm", "symlog")?;
+                        }
                     }
                     else {
                         my_plot_kwargs.set_item("cmap", "magma")?;
-                        my_plot_kwargs.set_item("vmin", f64::max(minimum, 1e-15))?;
+                        my_plot_kwargs.set_item("vmin", f64::max(minimum, 1e-25))?;
                         my_plot_kwargs.set_item("vmax", maximum)?;
-                        my_plot_kwargs.set_item("norm", "log")?;
+                        if context.scale == Scale::Logarithmic {
+                            my_plot_kwargs.set_item("norm", "log")?;
+                        }
                     }
 
                     let image = current_ax.getattr(py, "imshow")?.call_bound(py, (PyArray2::from_array_bound(py, result),), Some(&my_plot_kwargs))?;
