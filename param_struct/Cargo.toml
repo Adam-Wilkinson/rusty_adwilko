@@ -1,0 +1,15 @@
+[package]
+name = "param_struct"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+proc-macro = true
+
+[dependencies]
+syn = "2.0.63"
+quote="*"
+proc-macro2="*"
+darling = "0.20.8"

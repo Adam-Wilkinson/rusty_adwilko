@@ -1,0 +1,17 @@
+[package]
+name = "rusty_wilko"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+num="*"
+libm="*"
+paste="*"
+rayon="*"
+param_struct = { path = "param_struct" }
+numpy="*"
+ndarray= { version = "0.16.1", features = ["rayon"] }
+
+[dependencies.pyo3]
+version = "0.22.5"
+features = ["auto-initialize"]
