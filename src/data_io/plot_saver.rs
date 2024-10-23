@@ -237,8 +237,8 @@ impl<'a, const N : usize> Savable<Plot<'a>, PyErr> for CalculationResults<'a, Tw
                 .zip(flattened_ax)
                 .map(|(result, current_ax)| {
                     let my_plot_kwargs = plot_kwargs.copy()?;
-                    let minimum = (*result.iter().min_by(|x, y| if x.is_nan() { Ordering::Greater } else { x.total_cmp(y) }).unwrap()).min(context_min);
-                    let maximum = (*result.iter().min_by(|x, y| if x.is_nan() { Ordering::Greater } else if y.is_nan() { Ordering::Less } else { y.total_cmp(x) }).unwrap()).max(context_max);
+                    let minimum = (*result.iter().min_by(|x, y| if x.is_nan() { Ordering::Greater } else { x.total_cmp(y) }).unwrap()).max(context_min);
+                    let maximum = (*result.iter().min_by(|x, y| if x.is_nan() { Ordering::Greater } else if y.is_nan() { Ordering::Less } else { y.total_cmp(x) }).unwrap()).min(context_max);
 
                     if minimum < 0.0 {
                         my_plot_kwargs.set_item("cmap", "seismic")?;
@@ -257,7 +257,9 @@ impl<'a, const N : usize> Savable<Plot<'a>, PyErr> for CalculationResults<'a, Tw
                         }
                     }
 
-                    let image = current_ax.getattr(py, "imshow")?.call_bound(py, (PyArray2::from_array_bound(py, result),), Some(&my_plot_kwargs))?;
+                    let clamped_result = result.map(|value| value.clamp(minimum, maximum));
+
+                    let image = current_ax.getattr(py, "imshow")?.call_bound(py, (PyArray2::from_array_bound(py, &clamped_result),), Some(&my_plot_kwargs))?;
                     fig.getattr("colorbar")?.call((image,), Some(&[("ax", current_ax)].into_py_dict_bound(py)))
                 }).collect::<Result<Vec<_>, _>>()?;
 
