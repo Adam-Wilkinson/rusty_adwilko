@@ -2,6 +2,7 @@ extern crate pyo3;
 extern crate numpy;
 
 use std::cmp::Ordering;
+use std::ops::Range;
 
 use crate::data_io::Savable;
 use crate::domain::{CalculationResults, OneDimensionalDomain, TwoDimensionalDomain};
@@ -18,10 +19,10 @@ pub struct Plot<'a> {
     pub color_theme : ColorTheme<'a>,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 pub enum Scale {
     Linear,
-    Logarithmic,
+    Logarithmic { clipping : Range<f64>},
 }
 
 pub struct ColorTheme<'a> {
@@ -121,29 +122,35 @@ impl<'a, const N : usize> Savable<Plot<'a>, PyErr> for CalculationResults<'a, On
             let (fig, ax_numpy) : (Bound<PyAny>, Bound<PyAny>) = plt.getattr("subplots")?.call1((2,))?.extract()?;
             let ax: Bound<PyList> = ax_numpy.getattr("tolist")?.call0()?.downcast_into()?;
             let (real_axes, imag_axes) = (ax.get_item(0)?, ax.get_item(1)?);
-            let x_axis = PyList::new_bound(py, &self.domain_data.values);
 
             real_axes.getattr("set_title")?.call1(("Real Part",))?;
             imag_axes.getattr("set_title")?.call1(("Imaginary Part",))?;
 
-            self.results.iter()
-                .map(|result| {
-                    real_axes.getattr("plot")?.call1((&x_axis, PyList::new_bound(py, result.iter().map(|x| x.re).collect::<Vec<f64>>()),))?;
-                    imag_axes.getattr("plot")?.call1((&x_axis, PyList::new_bound(py, result.iter().map(|x| x.im).collect::<Vec<f64>>()),))
-                }).collect::<Result<Vec<_>, _>>()?;
+            let x_axis = PyList::new_bound(py, &self.domain_data.values);
 
-            if !self.result_names.iter().all(String::is_empty) {
-                    plt.getattr("legend")?.call1((PyList::new_bound(py, &self.result_names),))?;
-            }
+            let (min, max) = match &context.scale {
+                Scale::Linear => (f64::NEG_INFINITY, f64::INFINITY),
+                Scale::Logarithmic { clipping } => (clipping.start, clipping.end)
+            };
 
-            if context.scale == Scale::Linear {
-                [real_axes, imag_axes].iter().try_for_each(|ax| {
+            if let Scale::Logarithmic { clipping : _ } = &context.scale {
+                [&real_axes, &imag_axes].iter().try_for_each(|ax| {
                     ax.getattr("set_yscale")?.call1(("log",))?;
                     ax.getattr("set_ylabel")?.call1(("log",))?;
                     ax.getattr("set_xscale")?.call1(("log",))?;
                     ax.getattr("set_xlabel")?.call1(("log",))?;
                     Ok::<(), pyo3::PyErr>(())
                 })?;
+            }
+
+            self.results.iter()
+                .map(|y_axis| {
+                    real_axes.getattr("plot")?.call1((&x_axis, PyList::new_bound(py, y_axis.iter().map(|x| x.re.clamp(min, max)).collect::<Vec<f64>>()),))?;
+                    imag_axes.getattr("plot")?.call1((&x_axis, PyList::new_bound(py, y_axis.iter().map(|x| x.im.clamp(min, max)).collect::<Vec<f64>>()),))
+                }).collect::<Result<Vec<_>, _>>()?;
+
+            if !self.result_names.iter().all(String::is_empty) {
+                    plt.getattr("legend")?.call1((PyList::new_bound(py, &self.result_names),))?;
             }
 
             call_extra_funcs(py, "matplotlib.pyplot", context.extra_funcs)?;
@@ -165,8 +172,13 @@ impl<'a, const N : usize> Savable<Plot<'a>, PyErr> for CalculationResults<'a, On
 
             let x_axis = PyList::new_bound(py, &self.domain_data.values);
 
+            let (min, max) = match &context.scale {
+                Scale::Linear => (f64::NEG_INFINITY, f64::INFINITY),
+                Scale::Logarithmic { clipping } => (clipping.start, clipping.end)
+            };
+
             self.results.iter()
-                .map(|result| plt.getattr("plot")?.call1((&x_axis, PyList::new_bound(py, result))))
+                .map(|result| plt.getattr("plot")?.call1((&x_axis, PyList::new_bound(py, result.iter().map(|val| val.clamp(min, max))))))
                 .collect::<Result<Vec<_>, _>>()?;
 
             if !self.result_names.iter().all(String::is_empty) {
@@ -179,10 +191,12 @@ impl<'a, const N : usize> Savable<Plot<'a>, PyErr> for CalculationResults<'a, On
             savefig_kwargs.set_item("bbox_inches", "tight")?;
             savefig_kwargs.set_item("facecolor", "none")?;
 
-            plt.getattr("yscale")?.call1(("log",))?;
-            plt.getattr("ylabel")?.call1(("log",))?;
-            plt.getattr("xscale")?.call1(("log",))?;
-            plt.getattr("xlabel")?.call1(("log",))?;
+            if let Scale::Logarithmic { clipping: _ } = &context.scale {
+                plt.getattr("yscale")?.call1(("log",))?;
+                plt.getattr("ylabel")?.call1(("log",))?;
+                plt.getattr("xscale")?.call1(("log",))?;
+                plt.getattr("xlabel")?.call1(("log",))?;
+            }
 
             plt.getattr("savefig")?.call((file_path.to_owned() + ".pdf",), Some(&savefig_kwargs))?;
             if context.show {
@@ -209,6 +223,11 @@ impl<'a, const N : usize> Savable<Plot<'a>, PyErr> for CalculationResults<'a, Tw
                 
             let flattened_ax = flattened_ax_binding.as_slice()?;
             
+            let (context_min, context_max) = match &context.scale {
+                Scale::Linear => (f64::NEG_INFINITY, f64::INFINITY),
+                Scale::Logarithmic { clipping } => (clipping.start, clipping.end)
+            };
+
             let plot_kwargs = PyDict::new_bound(py);
             plot_kwargs.set_item("origin", "lower")?;
             plot_kwargs.set_item("extent", [self.domain_data.x_limits.0, self.domain_data.x_limits.1, self.domain_data.y_limits.0, self.domain_data.y_limits.1])?;
@@ -218,16 +237,14 @@ impl<'a, const N : usize> Savable<Plot<'a>, PyErr> for CalculationResults<'a, Tw
                 .zip(flattened_ax)
                 .map(|(result, current_ax)| {
                     let my_plot_kwargs = plot_kwargs.copy()?;
-                    let minimum = *result.iter().min_by(|x, y| if x.is_nan() { Ordering::Greater } else { x.total_cmp(y) }).unwrap();
-                    let maximum = *result.iter().min_by(|x, y| if x.is_nan() { Ordering::Greater } else if y.is_nan() { Ordering::Less } else { y.total_cmp(x) }).unwrap();
-
-                    println!("Min: {minimum}, Max: {maximum}");
+                    let minimum = (*result.iter().min_by(|x, y| if x.is_nan() { Ordering::Greater } else { x.total_cmp(y) }).unwrap()).min(context_min);
+                    let maximum = (*result.iter().min_by(|x, y| if x.is_nan() { Ordering::Greater } else if y.is_nan() { Ordering::Less } else { y.total_cmp(x) }).unwrap()).max(context_max);
 
                     if minimum < 0.0 {
                         my_plot_kwargs.set_item("cmap", "seismic")?;
                         my_plot_kwargs.set_item("vmin", -f64::max(-minimum, maximum))?;
                         my_plot_kwargs.set_item("vmax", f64::max(-minimum, maximum))?;
-                        if context.scale == Scale::Logarithmic {
+                        if let Scale::Logarithmic { clipping : _ } = context.scale {
                             my_plot_kwargs.set_item("norm", "symlog")?;
                         }
                     }
@@ -235,7 +252,7 @@ impl<'a, const N : usize> Savable<Plot<'a>, PyErr> for CalculationResults<'a, Tw
                         my_plot_kwargs.set_item("cmap", "magma")?;
                         my_plot_kwargs.set_item("vmin", f64::max(minimum, 1e-25))?;
                         my_plot_kwargs.set_item("vmax", maximum)?;
-                        if context.scale == Scale::Logarithmic {
+                        if let Scale::Logarithmic { clipping : _ } = context.scale {
                             my_plot_kwargs.set_item("norm", "log")?;
                         }
                     }
